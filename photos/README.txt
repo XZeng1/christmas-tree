@@ -8,6 +8,19 @@
 建议单张不超过 3MB（手机原图 5MB+ 会让首屏明显变慢）
 
 
+零、目录里现在的 1.jpg ～ 5.jpg 是示例图（可以直接删）
+----------------------------------------------------
+这 5 张是从 Pexels 找的免费授权圣诞照片，只为让你先看效果。
+换成自己的照片时，把它们删掉再传新的即可。
+
+出处（Pexels License，可免费商用，无需署名，此处仅作记录）：
+    1.jpg  https://www.pexels.com/photo/35222364/
+    2.jpg  https://www.pexels.com/photo/29845862/
+    3.jpg  https://www.pexels.com/photo/35137162/
+    4.jpg  https://www.pexels.com/photo/35122563/
+    5.jpg  https://www.pexels.com/photo/35214351/
+
+
 一、直接往 GitHub 仓库里传（推荐）
 --------------------------------
 1. 打开仓库 → `photos` 文件夹 → Add file → Upload files
