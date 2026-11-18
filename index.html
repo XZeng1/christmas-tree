@@ -45,34 +45,13 @@
             backdrop-filter: blur(10px);
         }
 
-        /* Setup Box */
-        .setup-container {
-            width: 90%; max-width: 400px;
-            padding: 30px;
-            border: 1px solid rgba(212, 175, 55, 0.3);
-            background: rgba(20, 20, 20, 0.6);
-            border-radius: 8px;
-            text-align: center;
-            box-shadow: 0 0 50px rgba(0,0,0,0.5);
+        /* Loader hint (shows what was found in config.json / photos/ / audio/) */
+        .loader-hint {
+            margin-top: 14px; font-size: 10px; letter-spacing: 1.5px;
+            color: #6f6f6f; text-align: center; line-height: 1.8;
+            font-family: ui-monospace, Menlo, Consolas, monospace; max-width: 320px;
         }
 
-        .setup-group { margin-bottom: 20px; text-align: left; }
-        .setup-label { display: block; margin-bottom: 8px; font-size: 12px; letter-spacing: 2px; text-transform: uppercase; color: #888; }
-        .setup-input { 
-            width: 100%; padding: 10px; background: rgba(255,255,255,0.05); 
-            border: 1px solid #444; color: #fff; font-family: inherit; box-sizing: border-box;
-            border-radius: 4px;
-        }
-        .file-input-wrapper { position: relative; overflow: hidden; display: inline-block; width: 100%; }
-        .file-btn {
-            border: 1px solid rgba(212, 175, 55, 0.5); color: #d4af37; background: transparent;
-            padding: 12px; width: 100%; cursor: pointer; transition: 0.3s;
-            text-transform: uppercase; font-size: 11px; letter-spacing: 2px;
-            border-radius: 4px;
-        }
-        .file-btn:hover { background: rgba(212, 175, 55, 0.1); }
-        .file-btn.selected { background: rgba(212, 175, 55, 0.8); color: #000; }
-        
         .action-btn {
             background: #d4af37; color: #000; border: none; padding: 15px 40px;
             font-size: 16px; letter-spacing: 4px; text-transform: uppercase;
@@ -82,6 +61,7 @@
             border-radius: 4px;
         }
         .action-btn:hover { box-shadow: 0 0 50px rgba(212, 175, 55, 0.6); }
+        .action-btn:disabled { opacity: 0.35; cursor: default; box-shadow: none; letter-spacing: 2px; }
         .action-btn:active { transform: scale(0.95); }
 
         #init-btn { display: none; margin-top: 30px; }
@@ -118,37 +98,8 @@
     <div id="system-loader" class="fullscreen-overlay" style="z-index: 200;">
         <div class="spinner" id="sys-spinner"></div>
         <div class="loader-text" id="sys-status">Preloading 3D Assets...</div>
-        <button id="init-btn" class="action-btn" onclick="requestPermissionAndNext()">Initialize & Allow Camera</button>
-    </div>
-
-    <!-- 2. SETUP SCREEN -->
-    <div id="setup-screen" class="fullscreen-overlay" style="z-index: 150; display: none;">
-        <div class="setup-container">
-            <h2 style="font-family: 'Cinzel'; margin-bottom: 30px; font-weight: 400;">Holiday Setup</h2>
-            
-            <div class="setup-group">
-                <label class="setup-label">Greeting Message</label>
-                <input type="text" id="greeting-input" class="setup-input" placeholder="Merry Christmas" value="Merry Christmas" maxlength="25">
-            </div>
-
-            <div class="setup-group">
-                <label class="setup-label">Add Photos (Multiple)</label>
-                <div class="file-input-wrapper">
-                    <button class="file-btn" id="photo-btn" onclick="document.getElementById('photo-input').click()">Select Images</button>
-                    <input type="file" id="photo-input" multiple accept="image/*" style="display: none;" onchange="handleSetupFiles(this, 'photo-btn')">
-                </div>
-            </div>
-
-            <div class="setup-group">
-                <label class="setup-label">Background Music</label>
-                <div class="file-input-wrapper">
-                    <button class="file-btn" id="music-btn" onclick="document.getElementById('music-input').click()">Select Audio</button>
-                    <input type="file" id="music-input" accept="audio/*" style="display: none;" onchange="handleSetupFiles(this, 'music-btn')">
-                </div>
-            </div>
-
-            <button class="action-btn" onclick="finishSetupAndReveal()">Start Magic</button>
-        </div>
+        <div class="loader-hint" id="sys-hint"></div>
+        <button id="init-btn" class="action-btn" onclick="enterExperience()" disabled>Loading&hellip;</button>
     </div>
 
     <!-- MAIN SCENE -->
@@ -166,120 +117,375 @@
     </div>
 
     <script>
+        // ============================================================
+        //  所有内容都从目录/文件读取，页面上没有任何表单项或上传按钮：
+        //    ./config.json  -> greeting（问候语）、music（音乐文件名）、volume（音量）
+        //    ./photos/      -> 照片：manifest.json 或 1.jpg、2.jpg …
+        //    ./audio/       -> 背景音乐：bgm.mp3（或 config.json 里指定的文件）
+        // ============================================================
+
         // --- GLOBAL VARIABLES ---
         let userPhotos = [];
-        let userAudio = null;
+        let siteConfig = {};
+        let bgmAudio = null;
+        let bgmLabel = '';
         let isCameraReady = false;
-        let globalStream = null; 
+        let globalStream = null;
+
+        // --- FOLDER / FILE CONFIG ---
+        const CONFIG_URL = './config.json';
+        const PHOTO_DIR = './photos/';
+        const PHOTO_MANIFEST = PHOTO_DIR + 'manifest.json';
+        const PHOTO_EXTS = ['jpg', 'jpeg', 'png', 'webp', 'JPG', 'JPEG', 'PNG'];
+        const PHOTO_MAX_INDEX = 40;
+        const AUDIO_DIR = './audio/';
+        const AUDIO_EXTS = ['mp3', 'm4a', 'ogg', 'wav', 'aac', 'flac'];
+        const DEFAULT_GREETING = 'Merry Christmas';
+        const DEFAULT_VOLUME = 0.5;
 
         // --- PHASE 1: PRELOAD ON LOAD ---
-        window.onload = () => {
-            // Start 3D Engine IMMEDIATELY in background
+        window.onload = async () => {
+            // 3D 引擎立即在后台启动
             if (window.startThreeEngine) window.startThreeEngine();
 
-            // UI Logic
             const status = document.getElementById('sys-status');
             const btn = document.getElementById('init-btn');
             const spinner = document.getElementById('sys-spinner');
+            const hint = document.getElementById('sys-hint');
 
-            status.innerHTML = "Welcome.<br>Please click below to enable camera access<br>for the full immersive experience.";
             spinner.style.display = 'none';
             btn.style.display = 'block';
+            btn.disabled = true;
+            btn.innerText = 'Loading\u2026';
+            status.innerHTML = 'Welcome.<br>Click below to enter';
+
+            // 先读配置（音乐路径由它决定），再并行扫描照片与音乐目录
+            await loadSiteConfig();
+            const [photoResult, music] = await Promise.all([loadPhotosFromFolder(), loadMusicFromFolder()]);
+
+            const photos = photoResult.photos;
+            userPhotos = photos;
+            bgmAudio = music.audio;
+            bgmLabel = music.label;
+
+            document.getElementById('main-title').innerText = siteConfig.greeting || DEFAULT_GREETING;
+
+            const sourceLabel = { repo: 'repo', manifest: 'manifest', numbered: '1.jpg…' }[photoResult.source] || '';
+            hint.textContent =
+                (photos.length ? `${photos.length} photo(s) \u00b7 photos/ (${sourceLabel})` : 'no photos \u00b7 photos/') +
+                '   |   ' +
+                (bgmLabel ? `music: ${bgmLabel}` : 'no music \u00b7 audio/');
+
+            btn.disabled = false;
+            btn.innerText = 'Enter & Allow Camera';
         };
 
-        // --- PHASE 2: PERMISSION ---
-        async function requestPermissionAndNext() {
+        // --- PHASE 2: ENTER (点击 = 解锁音频 + 请求摄像头) ---
+        async function enterExperience() {
             const status = document.getElementById('sys-status');
             const btn = document.getElementById('init-btn');
             const spinner = document.getElementById('sys-spinner');
 
             btn.style.display = 'none';
             spinner.style.display = 'block';
-            status.innerText = "Requesting Camera Access...";
 
+            // 必须在点击事件里同步调用，否则浏览器会拦截自动播放
+            unlockMusic();
+
+            status.innerText = 'Requesting Camera Access...';
             try {
                 // Keep the stream open!
                 globalStream = await navigator.mediaDevices.getUserMedia({ video: true });
                 isCameraReady = true;
-                status.innerText = "Camera Access Granted!";
-                
+                status.innerText = 'Camera Access Granted!';
+
                 // Initialize MediaPipe logic now, using the SAVED stream
                 if(window.initMediaPipeModule) window.initMediaPipeModule(globalStream);
 
             } catch (e) {
-                console.warn("Camera denied:", e);
+                console.warn('Camera denied:', e);
                 isCameraReady = false;
-                status.innerText = "Camera Skipped. Mouse Control Enabled.";
+                status.innerText = 'Camera Skipped. Mouse Control Enabled.';
             }
 
-            // Transition to Setup
-            setTimeout(() => {
-                document.getElementById('system-loader').style.display = 'none';
-                document.getElementById('setup-screen').style.display = 'flex';
-            }, 800);
+            setTimeout(revealScene, 800);
         }
 
-        // --- PHASE 3: SETUP & REVEAL ---
-        function handleSetupFiles(input, btnId) {
-            const btn = document.getElementById(btnId);
-            if(input.files && input.files.length > 0) {
-                btn.classList.add('selected');
-                btn.innerText = `${input.files.length} File(s) Selected`;
-                if(btnId === 'photo-btn') {
-                    userPhotos = [];
-                    Array.from(input.files).forEach(file => {
-                        const reader = new FileReader();
-                        reader.onload = (e) => {
-                            const img = new Image();
-                            img.src = e.target.result;
-                            img.onload = () => {
-                                userPhotos.push({
-                                    src: e.target.result,
-                                    aspect: img.width / img.height
-                                });
-                            };
-                        };
-                        reader.readAsDataURL(file);
-                    });
-                } else if (btnId === 'music-btn') {
-                    userAudio = input.files[0];
-                }
-            }
-        }
-
-        function finishSetupAndReveal() {
-            // 1. Update Title
-            const greeting = document.getElementById('greeting-input').value.trim() || "Merry Christmas";
-            document.getElementById('main-title').innerText = greeting;
-
-            // 2. Inject Photos into Running Scene
+        // --- PHASE 3: REVEAL (直接进场景，没有 setup 页) ---
+        function revealScene() {
             if (userPhotos.length > 0 && window.addPhotosToRunningScene) {
                 window.addPhotosToRunningScene(userPhotos);
             }
+            if (window.activateInteraction) window.activateInteraction();
 
-            // 3. Play Audio
-            if(userAudio) {
-                const audioUrl = URL.createObjectURL(userAudio);
-                const audio = new Audio(audioUrl);
-                audio.loop = true;
-                audio.volume = 0.5;
-                audio.play().catch(e => console.log("Audio play failed:", e));
-            }
+            const loader = document.getElementById('system-loader');
+            loader.style.opacity = 0;
+            setTimeout(() => { loader.style.display = 'none'; }, 800);
 
-            // 4. Reveal
-            const setupScreen = document.getElementById('setup-screen');
-            setupScreen.style.opacity = 0;
-            setTimeout(() => {
-                setupScreen.style.display = 'none';
-                // Activate interaction logic in 3D module
-                if(window.activateInteraction) window.activateInteraction();
-                // Show Webcam box if enabled
-                if(isCameraReady) document.getElementById('webcam-wrapper').style.opacity = 0.5;
-            }, 800);
+            if (isCameraReady) document.getElementById('webcam-wrapper').style.opacity = 0.5;
         }
 
+        // --- CONFIG / AUDIO LOADING (all from disk) ---
+        async function loadSiteConfig() {
+            try {
+                const res = await fetch(CONFIG_URL, { cache: 'no-store' });
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data && typeof data === 'object') siteConfig = data;
+                }
+            } catch (e) {
+                // 没有 config.json / 用 file:// 打开时都会走到这里，用默认值即可
+                console.log('[config] 未读取到 config.json，使用默认值');
+            }
+            return siteConfig;
+        }
+
+        function urlExists(url) {
+            return fetch(url, { method: 'HEAD', cache: 'no-store' })
+                .then(res => res.ok)
+                .catch(() => false);
+        }
+
+        async function findAudioUrl() {
+            const fromConfig = siteConfig.music;
+            if (fromConfig && typeof fromConfig === 'string') {
+                const url = /^(https?:|\/)/i.test(fromConfig) ? fromConfig : './' + fromConfig.replace(/^\.?\//, '');
+                if (await urlExists(url)) return url;
+                console.warn('[audio] config.json 里指定的 music 无法访问:', url);
+            }
+            for (const ext of AUDIO_EXTS) {
+                const url = `${AUDIO_DIR}bgm.${ext}`;
+                if (await urlExists(url)) return url;
+            }
+            return null;
+        }
+
+        async function loadMusicFromFolder() {
+            const url = await findAudioUrl();
+            if (!url) {
+                console.warn(`[audio] ${AUDIO_DIR} 下没有找到背景音乐（支持 ${AUDIO_EXTS.join('/')}）`);
+                return { audio: null, label: '' };
+            }
+            const volume = typeof siteConfig.volume === 'number' ? siteConfig.volume : DEFAULT_VOLUME;
+            const audio = new Audio(url);
+            audio.loop = true;
+            audio.volume = Math.min(1, Math.max(0, volume));
+            audio.preload = 'auto';
+
+            console.log(`[audio] 已加载背景音乐 ${url}（音量 ${audio.volume}）`);
+            return { audio, label: url.replace(/^\.\//, '') };
+        }
+
+        // 浏览器要求音频由用户手势触发：第一次点击时播，被拦就在下一次点击重试
+        function unlockMusic() {
+            if (!bgmAudio) return;
+            const attempt = () => {
+                bgmAudio.play().then(() => {
+                    document.removeEventListener('pointerdown', attempt);
+                    console.log('[audio] 播放中');
+                }).catch(err => {
+                    console.warn('[audio] 播放被拦截，等待下一次点击:', err.name);
+                });
+            };
+            attempt();
+            document.addEventListener('pointerdown', attempt);
+        }
+
+        // --- PHOTO LOADING FROM photos/ DIRECTORY ---
+        function probeImage(url) {
+            return new Promise(resolve => {
+                const img = new Image();
+                img.onload = () => resolve(img);
+                img.onerror = () => { img.onerror = null; resolve(null); };
+                img.src = url;
+            });
+        }
+
+        // --- GITHUB 仓库列目录 ---
+        // 静态站点本身不能列目录，但仓库能：用 Contents API 把 photos/ 下的文件名取回来，
+        // 这样图片叫什么都行（IMG_2841.JPG 也可以），不需要 manifest.json、也不用改名。
+        // 未登录限流 60 次/小时/IP —— 结果缓存 10 分钟，失败则静默回退到 manifest / 序号探测。
+        const GITHUB_DIR = 'photos';
+        const GH_CACHE_TTL = 5 * 60 * 1000;
+        const GH_TIMEOUT = 4000;
+        const IMG_NAME_RE = /\.(jpe?g|png|webp|avif|gif)$/i;
+
+        // 自动推断仓库：config.json 里写了就用它，否则从 xxx.github.io/<repo>/ 反推
+        function detectRepo() {
+            const dir = (siteConfig.photosDir || GITHUB_DIR);
+            const cfgRepo = siteConfig.repo;
+            if (typeof cfgRepo === 'string' && /^[\w.-]+\/[\w.-]+$/.test(cfgRepo)) {
+                return { repo: cfgRepo, dir };
+            }
+            const host = location.hostname || '';
+            if (!/\.github\.io$/i.test(host)) return null;
+            const owner = host.split('.')[0];
+            const repoName = (location.pathname || '').split('/').filter(Boolean)[0];
+            if (!owner || !repoName) return null;
+            return { repo: `${owner}/${repoName}`, dir };
+        }
+
+        function readPhotoCache(key) {
+            try {
+                const obj = JSON.parse(sessionStorage.getItem(key) || 'null');
+                if (!obj || Date.now() - obj.t > GH_CACHE_TTL || !Array.isArray(obj.v)) return null;
+                return obj.v;
+            } catch (e) { return null; }
+        }
+        function writePhotoCache(key, value) {
+            try { sessionStorage.setItem(key, JSON.stringify({ t: Date.now(), v: value })); } catch (e) {}
+        }
+        // 按 R 刷新时清掉目录缓存，否则加完图要等 5 分钟才看到
+        function clearPhotoCache() {
+            try {
+                const target = detectRepo();
+                if (target) sessionStorage.removeItem(`wb-photos:${target.repo}/${target.dir}`);
+            } catch (e) {}
+        }
+
+        async function listPhotoNamesFromRepo() {
+            const target = detectRepo();
+            if (!target) return null;
+
+            const cacheKey = `wb-photos:${target.repo}/${target.dir}`;
+            const cached = readPhotoCache(cacheKey);
+            if (cached) return cached;
+
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), GH_TIMEOUT);
+            try {
+                const res = await fetch(
+                    `https://api.github.com/repos/${target.repo}/contents/${target.dir}`,
+                    { headers: { Accept: 'application/vnd.github+json' }, signal: controller.signal, cache: 'no-store' }
+                );
+                if (!res.ok) {
+                    console.warn(`[photos] GitHub API 返回 ${res.status}（${target.repo}/${target.dir}），改用清单/序号探测`);
+                    return null;
+                }
+                const items = await res.json();
+                if (!Array.isArray(items)) return null;
+
+                const names = items
+                    .filter(it => it.type === 'file' && IMG_NAME_RE.test(it.name))
+                    .map(it => it.name)
+                    .sort((a, b) => a.localeCompare(b, 'en', { numeric: true, sensitivity: 'base' }));
+
+                writePhotoCache(cacheKey, names);
+                console.log(`[photos] GitHub 仓库 ${target.repo}/${target.dir} 列出 ${names.length} 个图片文件`);
+                return names;
+            } catch (e) {
+                console.warn('[photos] GitHub API 不可用（超时/网络/跨域），改用清单/序号探测:', e.name || e.message);
+                return null;
+            } finally {
+                clearTimeout(timer);
+            }
+        }
+
+        // 返回 null 表示"列目录失败"，交给下层方案；返回数组（可能为空）表示"列成功了"
+        async function photosFromRepo() {
+            const names = await listPhotoNamesFromRepo();
+            if (names === null) return null;
+
+            const loaded = await Promise.all(names.map(name => {
+                const url = PHOTO_DIR + encodeURIComponent(name);
+                return probeImage(url).then(img => img
+                    ? { src: url, aspect: img.naturalWidth / img.naturalHeight }
+                    : null);
+            }));
+
+            const ok = loaded.filter(Boolean);
+            if (ok.length < names.length) {
+                console.warn(`[photos] ${names.length - ok.length} 个文件在目录里但加载失败（可能太大了）`);
+            }
+            return ok;
+        }
+
+        // 方式一：photos/manifest.json（可选，优先生效）
+        async function readPhotoManifest() {
+            try {
+                const res = await fetch(PHOTO_MANIFEST, { cache: 'no-store' });
+                if (!res.ok) return null;
+                const data = await res.json();
+                const list = Array.isArray(data) ? data : (data && data.photos) || [];
+                const out = [];
+                for (const entry of list) {
+                    const raw = typeof entry === 'string' ? entry : entry && entry.src;
+                    if (!raw) continue;
+                    const url = /^(https?:|data:|blob:|\/)/i.test(raw)
+                        ? raw
+                        : PHOTO_DIR + raw.replace(/^\.?\//, '');
+                    const img = await probeImage(url);
+                    if (!img) { console.warn('[photos] manifest 中的文件无法加载，已跳过:', url); continue; }
+                    out.push({ src: url, aspect: img.naturalWidth / img.naturalHeight });
+                }
+                return out;
+            } catch (e) {
+                return null;
+            }
+        }
+
+        // 方式二：按序号探测 photos/1.jpg、photos/2.jpg …（连续，遇到缺号停止）
+        async function scanNumberedPhotos() {
+            const found = [];
+            let preferred = null; // 记住上一张命中的扩展名，下一张先试它，减少无效请求
+            for (let i = 1; i <= PHOTO_MAX_INDEX; i++) {
+                let hit = null;
+
+                if (preferred) {
+                    const url = `${PHOTO_DIR}${i}.${preferred}`;
+                    const img = await probeImage(url);
+                    if (img) hit = { img, url };
+                }
+
+                if (!hit) {
+                    const others = PHOTO_EXTS.filter(ext => ext !== preferred);
+                    const hits = await Promise.all(others.map(ext => {
+                        const url = `${PHOTO_DIR}${i}.${ext}`;
+                        return probeImage(url).then(img => (img ? { img, url } : null));
+                    }));
+                    hit = hits.find(Boolean);
+                }
+
+                if (!hit) break;
+                preferred = hit.url.slice(hit.url.lastIndexOf('.') + 1);
+                found.push({ src: hit.url, aspect: hit.img.naturalWidth / hit.img.naturalHeight });
+            }
+            return found;
+        }
+
+        async function loadPhotosFromFolder() {
+            let photos = null;
+            let source = '';
+
+            // 1) GitHub 仓库目录 —— 图片在仓库里，文件名随意
+            try { photos = await photosFromRepo(); } catch (e) { photos = null; }
+            if (photos !== null) source = 'repo';
+
+            // 2) 本地 manifest.json
+            if (photos === null) {
+                const fromManifest = await readPhotoManifest().catch(() => null);
+                if (fromManifest && fromManifest.length) { photos = fromManifest; source = 'manifest'; }
+            }
+
+            // 3) 序号探测 1.jpg、2.jpg …
+            if (photos === null) {
+                photos = await scanNumberedPhotos().catch(() => []);
+                source = 'numbered';
+            }
+
+            console.log(photos.length
+                ? `[photos] 来源=${source}，已加载 ${photos.length} 张`
+                : `[photos] 来源=${source}，没有找到照片`);
+
+            return { photos, source };
+        }
+
+        // R = 重新扫描（清目录缓存后重载，换完照片按一下就行）
         window.addEventListener('keydown', (e) => {
-            if(e.key.toLowerCase() === 'r') location.reload();
+            if (e.key.toLowerCase() === 'r') {
+                clearPhotoCache();
+                location.reload();
+            }
         });
     </script>
 
